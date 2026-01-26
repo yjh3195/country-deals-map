@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin · Country Deals</title>
+  <link rel="stylesheet" href="/style.css" />
+
+  <!-- ✅ admin.js가 centroid 계산할 때 필요 (없으면 continent 추정이 Unknown으로 떨어질 수 있음) -->
+  <script src="/vendor/d3.v7.min.js"></script>
+  <script src="/vendor/topojson-client.min.js"></script>
+</head>
+<body>
+  <div class="page">
+
+    <!-- ✅ top bar -->
+    <header class="topbarMini card">
+      <div class="left">
+        <div class="title">Admin Country Deals</div>
+        <div class="desc">Manage deals + label positions</div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; white-space:nowrap;">
+        <a class="btn" href="/">← Map</a>
+        <button id="btnLogin" class="btn" type="button">Login</button>
+        <button id="btnLogout" class="btn" type="button">Logout</button>
+        <span id="authStatus" class="pill">Not signed in</span>
+      </div>
+    </header>
+
+    <div class="adminWrap">
+
+      <!-- ✅ New Deal -->
+      <section class="card cardPad">
+        <div style="font-weight:950; margin-bottom:6px;">New Deal</div>
+        <div class="muted small" style="margin-bottom:12px;">
+          Continent filters country list (auto-guess from map geometry). “All” shows all countries.
+        </div>
+
+        <div class="formGrid">
+          <div class="field">
+            <label>Continent</label>
+            <select id="newContinent" class="input"></select>
+          </div>
+
+          <div class="field">
+            <label>Country (Map Name)</label>
+            <select id="newCountry" class="input"></select>
+          </div>
+
+          <div class="field">
+            <label>Deal</label>
+            <select id="newDeal" class="input">
+              <option value="EXCLUSIVE">EXCLUSIVE</option>
+              <option value="MLD">MLD</option>
+              <option value="GLD">GLD</option>
+              <option value="TBD">TBD</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Partner</label>
+            <input id="newPartner" class="input" type="text" placeholder="Partner name" />
+          </div>
+        </div>
+
+        <div class="rowActions">
+          <button id="btnAdd" class="btn" type="button" disabled>Add</button>
+        </div>
+      </section>
+
+      <!-- ✅ DB List -->
+      <section class="card cardPad">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div style="font-weight:950;">DB List</div>
+            <button id="btnReload" class="btnMini" type="button">Reload</button>
+            <button id="btnDeleteSelected" class="btnMini danger" type="button" disabled>Delete Selected</button>
+            <span id="selCount" class="muted">0 selected</span>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div class="field" style="flex-direction:row; align-items:center; gap:8px;">
+              <label class="muted small" style="margin:0;">Page size</label>
+              <select id="pageSize" class="input" style="padding:6px 10px;">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </div>
+
+            <input id="searchBox" class="input" style="min-width:260px;" placeholder="Search (country / partner / deal / continent)" />
+
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button id="btnPrev" class="btnMini" type="button">‹</button>
+              <div id="pageInfo" class="muted small">Page 1 / 1 · 0 rows</div>
+              <button id="btnNext" class="btnMini" type="button">›</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:10px;"></div>
+
+        <div class="tableWrap">
+          <table id="dbTable" class="table">
+            <thead>
+              <tr>
+                <th style="width:44px;">
+                  <input id="chkAll" type="checkbox" />
+                </th>
+                <th data-sort="continent">Continent <span class="muted">↕</span></th>
+                <th data-sort="country_name">Country <span class="muted">↕</span></th>
+                <th data-sort="deal_type">Deal <span class="muted">↕</span></th>
+                <th data-sort="partner_name">Partner <span class="muted">↕</span></th>
+                <th data-sort="updated_at">Updated <span class="muted">↕</span></th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody id="dbTbody">
+              <tr><td colspan="7" class="muted" style="padding:18px;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+
+
+
+  <script src="/admin.js"></script>
+</body>
+</html>

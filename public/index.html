@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mary&May Global Distribution Status</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+
+<body>
+  <div class="page">
+
+    <header class="topbar card">
+      <div>
+        <h1>Mary&May Global Distribution Status</h1>
+        <div class="sub">Exclusive=Red · MLD=Yellow · GLD=Green · TBD=Purple · Hover for details</div>
+      </div>
+
+      <div class="topActions">
+        <button id="fltExclusive" class="chip isOn" type="button">EXCLUSIVE</button>
+        <button id="fltMLD" class="chip isOn" type="button">MLD</button>
+        <button id="fltGLD" class="chip isOn" type="button">GLD</button>
+        <button id="fltTBD" class="chip isOn" type="button">TBD</button>
+
+        <span style="width:10px;"></span>
+
+        <button id="btnEditLabels" class="btn" type="button">Edit labels</button>
+        <button id="btnSaveLabels" class="btn" type="button" disabled>Save</button>
+        <button id="btnResetLabels" class="btn danger" type="button" disabled>Reset</button>
+
+        <a href="/admin" class="iconBtn" title="Admin">⚙</a>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div id="mapWrap" class="card">
+        <div id="mapError" style="display:none;"></div>
+        <div id="map"></div>
+        <div id="tooltip" class="tooltip"></div>
+      </div>
+
+      <!-- ✅ 패널을 하단으로 -->
+      <aside class="sidePanel card">
+        <div id="panelBody" class="panelBody muted">No selection</div>
+      </aside>
+
+    </div>
+
+  </div>
+
+  <script src="/vendor/d3.v7.min.js"></script>
+  <script src="/vendor/topojson-client.min.js"></script>
+  <script src="/map.js"></script>
+</body>
+</html>

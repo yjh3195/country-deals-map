@@ -1,0 +1,640 @@
+// public/admin.js (FULL REPLACE) v20260123-a
+(() => {
+  const $ = (s) => document.querySelector(s);
+
+  const btnLogin = $("#btnLogin");
+  const btnLogout = $("#btnLogout");
+  const authStatus = $("#authStatus");
+
+  const newContinent = $("#newContinent");
+  const newCountry = $("#newCountry");
+  const newDeal = $("#newDeal");
+  const newPartner = $("#newPartner");
+  const btnAdd = $("#btnAdd");
+
+  const btnReload = $("#btnReload");
+  const btnDeleteSelected = $("#btnDeleteSelected");
+  const selCount = $("#selCount");
+  const chkAll = $("#chkAll");
+  const searchBox = $("#searchBox");
+
+  const btnPrev = $("#btnPrev");
+  const btnNext = $("#btnNext");
+  const pageInfo = $("#pageInfo");
+  const pageSizeSel = $("#pageSize");
+
+  const tbody = $("#dbTbody");
+  const table = $("#dbTable");
+
+  let authed = false;
+
+  // world-atlas list
+  let worldCountries = []; // [{iso2, name}]
+  let iso2ToName = new Map();
+
+  // ✅ iso2 -> continent (sub-continents)
+  let iso2ToContinent = new Map();
+
+  // db rows
+  let rows = [];
+  let view = [];
+  let page = 1;
+  let pageSize = Number(pageSizeSel?.value) || 50;
+
+  // selection & sorting
+  const selectedIds = new Set();
+  let sortKey = "updated_at";
+  let sortDir = "desc"; // asc|desc
+
+  // ---------- helpers ----------
+  function escapeHTML(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  async function fetchJSON(url, opts) {
+    const r = await fetch(url, opts);
+    const t = await r.text();
+    let j = {};
+    try { j = t ? JSON.parse(t) : {}; } catch {}
+    if (!r.ok) throw new Error(`${url} -> ${r.status} ${r.statusText}${j?.error ? ` (${j.error})` : ""}`);
+    return j;
+  }
+
+  async function postJSON(url, body) {
+    return fetchJSON(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {}),
+    });
+  }
+
+  async function putJSON(url, body) {
+    return fetchJSON(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {}),
+    });
+  }
+
+  async function delJSON(url) {
+    return fetchJSON(url, { method: "DELETE", credentials: "same-origin" });
+  }
+
+  function setAuthUI() {
+    if (!authStatus) return;
+    authStatus.textContent = authed ? "Signed in" : "Not signed in";
+    authStatus.classList.toggle("ok", authed);
+
+    if (btnAdd) btnAdd.disabled = !authed;
+    if (btnDeleteSelected) btnDeleteSelected.disabled = !authed || selectedIds.size === 0;
+  }
+
+  async function refreshAuth() {
+    const j = await fetchJSON("/api/health", { credentials: "same-origin" });
+    authed = !!j.authed;
+    setAuthUI();
+  }
+
+  async function doLogin() {
+    const pw = prompt("Admin password");
+    if (!pw) return;
+    try {
+      await postJSON("/api/login", { password: pw });
+      await refreshAuth();
+      await loadDeals();
+    } catch (e) {
+      alert(String(e.message || e));
+    }
+  }
+
+  async function doLogout() {
+    try { await postJSON("/api/logout", {}); } catch {}
+    authed = false;
+    selectedIds.clear();
+    setAuthUI();
+    render();
+  }
+
+  // ---------- A안: 좌표 기반 sub-continent 분류 ----------
+  // 지도(TopoJSON)만으로 centroid(lon,lat) -> 대륙 추정
+  function guessContinentFromLonLat(lon, lat) {
+    // Antarctica
+    if (lat <= -60) return "Antarctica";
+
+    // Oceania (호주/뉴질랜드/태평양)
+    // (대략) 110E~180 / -50~20, 또는 -180~-130(태평양 섬 일부)
+    if ((lon >= 110 && lon <= 180 && lat >= -50 && lat <= 25) || (lon <= -130 && lat >= -25 && lat <= 25)) {
+      return "Oceania";
+    }
+
+    // Americas (서반구)
+    if (lon <= -30) {
+      // North/Central/South 분기 (대략 위도 기준)
+      if (lat >= 15) return "North America";
+      if (lat >= 7) return "Central America"; // + Caribbean 일부 포함
+      return "South America";
+    }
+
+    // Africa (대략)
+    if (lon >= -25 && lon <= 60 && lat >= -40 && lat <= 37) {
+      // 북아프리카가 아시아권(중동)으로 튀지 않도록 우선 처리
+      return "Africa";
+    }
+
+    // Europe (대략)
+    if (lon >= -30 && lon <= 60 && lat >= 35 && lat <= 72) {
+      return "Europe";
+    }
+
+    // Middle East (대략) — 사용자가 원하면 별도 분리
+    if (lon >= 34 && lon <= 60 && lat >= 12 && lat <= 38) {
+      return "Middle East";
+    }
+
+    // Asia (대략)
+    if (lon >= 60 && lon <= 180 && lat >= 5 && lat <= 80) {
+      return "Asia";
+    }
+
+    return "Unknown";
+  }
+
+  // ✅ 추가/보정: 싱가폴, 홍콩 등
+  const CONTINENT_OVERRIDES = {
+    SG: "Asia",
+    HK: "Asia",
+    MO: "Asia",
+    TW: "Asia",
+  };
+
+  const CONTINENT_ORDER = [
+    "All",
+    "Asia",
+    "Europe",
+    "North America",
+    "Central America",
+    "South America",
+    "Africa",
+    "Middle East",
+    "Oceania",
+    "Antarctica",
+    "Unknown",
+  ];
+
+  function rebuildContinentDropdown() {
+    if (!newContinent) return;
+    newContinent.innerHTML = "";
+    for (const c of CONTINENT_ORDER) {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      newContinent.appendChild(opt);
+    }
+    // default
+    newContinent.value = "All";
+  }
+
+  function getCountryListFiltered(continent) {
+    const key = String(continent || "All");
+    if (key === "All") return worldCountries;
+
+    return worldCountries.filter((c) => {
+      const m = iso2ToContinent.get(c.iso2) || "Unknown";
+      return m === key;
+    });
+  }
+
+  function rebuildCountryDropdown(continent) {
+    if (!newCountry) return;
+    const list = getCountryListFiltered(continent);
+
+    newCountry.innerHTML = "";
+    for (const c of list) {
+      const opt = document.createElement("option");
+      opt.value = c.iso2;
+      opt.textContent = `${c.name} (${c.iso2})`;
+      newCountry.appendChild(opt);
+    }
+
+    // 선택이 사라졌으면 첫 항목으로
+    if (!newCountry.value && list.length) newCountry.value = list[0].iso2;
+  }
+
+  function inferContinentFromIso2(iso2) {
+    const key = String(iso2 || "").toUpperCase();
+    return CONTINENT_OVERRIDES[key] || iso2ToContinent.get(key) || "Unknown";
+  }
+
+  // ---------- load world atlas + build continent map ----------
+  async function loadWorldAtlasCountriesAndContinents() {
+    // Build iso2->name from countries-110m.json + iso_n3_to_iso2.json
+    const topo = await fetchJSON("/data/countries-110m.json");
+    const n3map = await fetchJSON("/data/iso_n3_to_iso2.json");
+
+    if (!window.topojson || !window.d3) {
+      // admin.html에 vendor 스크립트가 없으면 centroid 계산이 안됨
+      // 그래도 드롭다운은 만들되, continent는 Unknown으로 처리
+      console.warn("Admin: missing topojson/d3 libs. Continents will be Unknown.");
+    }
+
+    const geoms = topo?.objects?.countries?.geometries || [];
+    const mapIso2Name = new Map();
+    const mapIso2Cont = new Map();
+
+    // features 만들기(centroid 계산 위해)
+    let features = [];
+    try {
+      features = window.topojson && topo ? window.topojson.feature(topo, topo.objects.countries).features : [];
+    } catch {
+      features = [];
+    }
+
+    // n3 -> iso2 + name
+    for (const g of geoms) {
+      const n3 = String(g.id || "").trim();
+      const iso2 = String(n3map[n3] || "").trim().toUpperCase();
+      const name = String(g.properties?.name || "").trim();
+      if (iso2 && name && !mapIso2Name.has(iso2)) mapIso2Name.set(iso2, name);
+    }
+
+    // ✅ extra: Hong Kong (없을 수 있음), Singapore(있어야 하지만 안전하게)
+    const extra = [
+      { iso2: "HK", name: "Hong Kong" },
+      { iso2: "SG", name: "Singapore" },
+    ];
+    for (const e of extra) {
+      if (!mapIso2Name.has(e.iso2)) mapIso2Name.set(e.iso2, e.name);
+    }
+
+    // continent 추정: feature의 geoCentroid 사용
+    // features에는 iso2가 없으니 n3->iso2로 다시 붙여서 centroid 계산
+    if (features.length && window.d3) {
+      for (const f of features) {
+        const n3 = String(f.id || "").trim();
+        const iso2 = String(n3map[n3] || "").trim().toUpperCase();
+        if (!iso2) continue;
+
+        let lon = 0, lat = 0;
+        try {
+          const c = window.d3.geoCentroid(f); // [lon,lat]
+          lon = Number(c?.[0]);
+          lat = Number(c?.[1]);
+        } catch {}
+
+        let cont = guessContinentFromLonLat(lon, lat);
+        if (CONTINENT_OVERRIDES[iso2]) cont = CONTINENT_OVERRIDES[iso2];
+
+        mapIso2Cont.set(iso2, cont);
+      }
+    }
+
+    // overrides apply even if no feature
+    for (const [k, v] of Object.entries(CONTINENT_OVERRIDES)) mapIso2Cont.set(k, v);
+
+    iso2ToName = mapIso2Name;
+    iso2ToContinent = mapIso2Cont;
+
+    worldCountries = [...mapIso2Name.entries()]
+      .map(([iso2, name]) => ({ iso2, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // ---------- deals ----------
+  async function loadDeals() {
+    const j = await fetchJSON("/api/deals", { credentials: "same-origin" });
+    rows = (j.data || []).map((r) => {
+      const iso2 = String(r.country_iso2 || "").toUpperCase();
+      return {
+        ...r,
+        country_name: iso2ToName.get(iso2) || iso2,
+        _dirty: false,
+      };
+    });
+
+    selectedIds.clear();
+    if (chkAll) chkAll.checked = false;
+    applyView();
+    setAuthUI();
+  }
+
+  function applyView() {
+    const q = String(searchBox?.value || "").trim().toLowerCase();
+    view = rows.filter((r) => {
+      if (!q) return true;
+      return (
+        String(r.continent || "").toLowerCase().includes(q) ||
+        String(r.country_iso2 || "").toLowerCase().includes(q) ||
+        String(r.country_name || "").toLowerCase().includes(q) ||
+        String(r.deal_type || "").toLowerCase().includes(q) ||
+        String(r.partner_name || "").toLowerCase().includes(q) ||
+        String(r.updated_at || "").toLowerCase().includes(q)
+      );
+    });
+
+    sortView();
+    page = 1;
+    render();
+  }
+
+  function sortView() {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const getVal = (r) => String(r[sortKey] ?? "");
+    view.sort((a, b) => getVal(a).localeCompare(getVal(b)) * dir);
+  }
+
+  function setSort(key) {
+    if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+    else { sortKey = key; sortDir = "asc"; }
+    sortView();
+    render();
+  }
+
+  function updateSelectionUI() {
+    if (selCount) selCount.textContent = `${selectedIds.size} selected`;
+    if (btnDeleteSelected) btnDeleteSelected.disabled = !authed || selectedIds.size === 0;
+  }
+
+  function render() {
+    updateSelectionUI();
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+
+    const total = view.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    page = Math.min(page, totalPages);
+
+    const start = (page - 1) * pageSize;
+    const end = Math.min(start + pageSize, total);
+    const pageRows = view.slice(start, end);
+
+    if (pageInfo) pageInfo.textContent = `Page ${page} / ${totalPages} · ${total} rows`;
+    if (btnPrev) btnPrev.disabled = page <= 1;
+    if (btnNext) btnNext.disabled = page >= totalPages;
+
+    if (pageRows.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="7" class="muted" style="padding:18px;">No rows</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const contOptionsHTML = CONTINENT_ORDER
+      .filter((c) => c !== "All") // 테이블에는 All 없이
+      .map((c) => `<option value="${c}">${c}</option>`)
+      .join("");
+
+    for (const r of pageRows) {
+      const tr = document.createElement("tr");
+      tr.dataset.id = r.id;
+      if (r._dirty) tr.classList.add("dirty");
+
+      const isSelected = selectedIds.has(r.id);
+
+      const countryOptions = worldCountries
+        .map((c) => {
+          const selected = String(r.country_iso2 || "").toUpperCase() === c.iso2 ? "selected" : "";
+          return `<option value="${c.iso2}" ${selected}>${escapeHTML(c.name)} (${c.iso2})</option>`;
+        })
+        .join("");
+
+      const dealOptions = ["EXCLUSIVE", "MLD", "GLD", "TBD"]
+        .map((d) => `<option value="${d}" ${String(r.deal_type || "").toUpperCase() === d ? "selected" : ""}>${d}</option>`)
+        .join("");
+
+      tr.innerHTML = `
+        <td class="col-check"><input class="rowCheck" type="checkbox" ${isSelected ? "checked" : ""}></td>
+
+        <td>
+          <select class="input input--sm contSel">
+            ${contOptionsHTML}
+          </select>
+        </td>
+
+        <td>
+          <select class="input input--sm countrySel">${countryOptions}</select>
+        </td>
+
+        <td>
+          <select class="input input--sm dealSel">${dealOptions}</select>
+        </td>
+
+        <td>
+          <input class="input input--sm partnerInp" value="${escapeHTML(r.partner_name || "")}">
+        </td>
+
+        <td class="muted small">${escapeHTML(r.updated_at || "")}</td>
+
+        <td class="col-actions">
+          <div style="display:flex; gap:8px; align-items:center; white-space:nowrap;">
+            <button class="btnMini primary saveBtn" ${(!authed || !r._dirty) ? "disabled" : ""}>Save</button>
+            <button class="btnMini danger delBtn" ${!authed ? "disabled" : ""}>Delete</button>
+          </div>
+        </td>
+      `;
+
+      const rowChk = tr.querySelector(".rowCheck");
+      rowChk.addEventListener("change", () => {
+        if (rowChk.checked) selectedIds.add(r.id);
+        else selectedIds.delete(r.id);
+        updateSelectionUI();
+      });
+
+      const contSel = tr.querySelector(".contSel");
+      const countrySel = tr.querySelector(".countrySel");
+      const dealSel = tr.querySelector(".dealSel");
+      const partnerInp = tr.querySelector(".partnerInp");
+      const saveBtn = tr.querySelector(".saveBtn");
+      const delBtn = tr.querySelector(".delBtn");
+
+      // 초기 continent 세팅
+      const inferred = inferContinentFromIso2(r.country_iso2);
+      contSel.value = CONTINENT_ORDER.includes(String(r.continent)) && r.continent !== "All"
+        ? r.continent
+        : inferred;
+
+      function markDirty() {
+        r._dirty = true;
+        tr.classList.add("dirty");
+        saveBtn.disabled = !authed ? true : false;
+      }
+
+      contSel.addEventListener("change", () => { r.continent = contSel.value; markDirty(); });
+
+      countrySel.addEventListener("change", () => {
+        r.country_iso2 = countrySel.value;
+        r.country_name = iso2ToName.get(String(r.country_iso2 || "").toUpperCase()) || r.country_iso2;
+
+        // country 바꾸면 continent도 자동 추정(사용자 편의)
+        const autoC = inferContinentFromIso2(r.country_iso2);
+        r.continent = autoC;
+        contSel.value = autoC;
+
+        markDirty();
+      });
+
+      dealSel.addEventListener("change", () => { r.deal_type = dealSel.value; markDirty(); });
+      partnerInp.addEventListener("input", () => { r.partner_name = partnerInp.value; markDirty(); });
+
+      saveBtn.addEventListener("click", async () => {
+        if (!authed) return;
+        saveBtn.disabled = true;
+        try {
+          await putJSON(`/api/deals/${r.id}`, {
+            country_iso2: r.country_iso2,
+            continent: r.continent,
+            deal_type: r.deal_type,
+            partner_name: r.partner_name,
+          });
+          await loadDeals();
+        } catch (e) {
+          alert(String(e.message || e));
+          saveBtn.disabled = false;
+        }
+      });
+
+      delBtn.addEventListener("click", async () => {
+        if (!authed) return;
+        if (!confirm(`Delete?\n\n${r.country_name} (${r.country_iso2})\n${r.deal_type} - ${r.partner_name}`)) return;
+        try {
+          await delJSON(`/api/deals/${r.id}`);
+          selectedIds.delete(r.id);
+          await loadDeals();
+        } catch (e) {
+          alert(String(e.message || e));
+        }
+      });
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function createDeal() {
+    if (!authed) return alert("Login first.");
+
+    const country_iso2 = newCountry.value;
+    const deal_type = newDeal.value;
+    const partner_name = String(newPartner.value || "").trim();
+
+    // ✅ All이면 자동 추정으로 저장
+    let continent = newContinent.value;
+    if (continent === "All") continent = inferContinentFromIso2(country_iso2);
+
+    if (!country_iso2) return alert("Choose a country");
+    if (!partner_name) return alert("Enter partner name");
+
+    btnAdd.disabled = true;
+    try {
+      await postJSON("/api/deals", { continent, country_iso2, deal_type, partner_name });
+      newPartner.value = "";
+      await loadDeals();
+    } catch (e) {
+      alert(String(e.message || e));
+    } finally {
+      btnAdd.disabled = !authed;
+    }
+  }
+
+  async function deleteSelected() {
+    if (!authed) return;
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} selected rows?`)) return;
+
+    btnDeleteSelected.disabled = true;
+    try {
+      for (const id of [...selectedIds]) await delJSON(`/api/deals/${id}`);
+      selectedIds.clear();
+      chkAll.checked = false;
+      await loadDeals();
+    } catch (e) {
+      alert(String(e.message || e));
+    } finally {
+      updateSelectionUI();
+    }
+  }
+
+  // ---------- events ----------
+  btnLogin?.addEventListener("click", doLogin);
+  btnLogout?.addEventListener("click", doLogout);
+  btnReload?.addEventListener("click", loadDeals);
+  btnAdd?.addEventListener("click", createDeal);
+  btnDeleteSelected?.addEventListener("click", deleteSelected);
+
+  searchBox?.addEventListener("input", applyView);
+
+  pageSizeSel?.addEventListener("change", () => {
+    pageSize = Number(pageSizeSel.value) || 50;
+    page = 1;
+    chkAll.checked = false;
+    render();
+  });
+
+  btnPrev?.addEventListener("click", () => {
+    page = Math.max(1, page - 1);
+    chkAll.checked = false;
+    render();
+  });
+
+  btnNext?.addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil(view.length / pageSize));
+    page = Math.min(totalPages, page + 1);
+    chkAll.checked = false;
+    render();
+  });
+
+  chkAll?.addEventListener("change", () => {
+    const total = view.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    page = Math.min(page, totalPages);
+    const start = (page - 1) * pageSize;
+    const end = Math.min(start + pageSize, total);
+    const pageRows = view.slice(start, end);
+
+    if (!chkAll.checked) for (const r of pageRows) selectedIds.delete(r.id);
+    else for (const r of pageRows) selectedIds.add(r.id);
+    render();
+  });
+
+  table?.querySelectorAll("th[data-sort]")?.forEach((th) => {
+    th.addEventListener("click", () => setSort(th.dataset.sort));
+  });
+
+  // ✅ Continent dropdown change => country list filter
+  newContinent?.addEventListener("change", () => {
+    rebuildCountryDropdown(newContinent.value);
+  });
+
+  // ✅ Country change => continent auto-select (사용자 편의)
+  newCountry?.addEventListener("change", () => {
+    const iso2 = newCountry.value;
+    const c = inferContinentFromIso2(iso2);
+    if (newContinent.value === "All") return; // All이면 유지
+    newContinent.value = c;
+    rebuildCountryDropdown(c);
+    newCountry.value = iso2; // 다시 선택 유지
+  });
+
+  // ---------- init ----------
+  (async function init() {
+    try {
+      await loadWorldAtlasCountriesAndContinents();
+
+      // continent dropdown + initial country list
+      rebuildContinentDropdown();
+      rebuildCountryDropdown("All");
+
+      await refreshAuth();
+      await loadDeals();
+    } catch (e) {
+      console.error(e);
+      alert(`Admin init failed:\n${String(e.message || e)}`);
+    }
+  })();
+})();
