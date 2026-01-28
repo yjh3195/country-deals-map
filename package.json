@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
-  "scripts": {
-    "dev": "node server.js"
+"scripts": {
+  "dev": "node server.js",
+  "start": "node server.js"
+
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.93.2",
     "better-sqlite3": "^12.6.2",
     "cookie-parser": "^1.4.7",
+    "dotenv": "^17.2.3",
     "express": "^4.22.1",
     "express-session": "^1.18.2",
     "iso-3166": "^4.4.0",
