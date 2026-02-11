@@ -1,5 +1,4 @@
-// server.js (FULL REPLACE) v20260128-supabase-A
-
+// server.js (FULL REPLACE) v20260211-map-toggle
 
 import express from "express";
 import path from "path";
@@ -32,12 +31,8 @@ function clearAuthCookie(res) {
 }
 
 // ---------- Supabase client (server-only) ----------
-if (!SUPABASE_URL) {
-  console.error("[FATAL] Missing SUPABASE_URL");
-}
-if (!SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("[FATAL] Missing SUPABASE_SERVICE_ROLE_KEY");
-}
+if (!SUPABASE_URL) console.error("[FATAL] Missing SUPABASE_URL");
+if (!SUPABASE_SERVICE_ROLE_KEY) console.error("[FATAL] Missing SUPABASE_SERVICE_ROLE_KEY");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -47,7 +42,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// static
 app.use(
   express.static(path.join(__dirname, "public"), {
     extensions: ["html"],
@@ -63,8 +57,6 @@ function normType(s) {
   const t = String(s || "").trim().toUpperCase();
   if (!t) return "TBD";
   if (t === "EXCLUSIVE" || t === "MLD" || t === "GLD" || t === "TBD") return t;
-  // allow older values like "Exclusive"
-  if (t === "EXCLUSIVE") return "EXCLUSIVE";
   return t;
 }
 
@@ -74,14 +66,12 @@ function nowIso() {
 
 // ---------- API ----------
 app.get("/api/health", async (req, res) => {
-  // lightweight check
-  const hasServiceRoleKey = !!SUPABASE_SERVICE_ROLE_KEY;
   res.json({
     ok: true,
     authed: isAuthed(req),
     db: "supabase",
     supabaseUrl: SUPABASE_URL,
-    hasServiceRoleKey,
+    hasServiceRoleKey: !!SUPABASE_SERVICE_ROLE_KEY,
     ts: nowIso(),
   });
 });
@@ -105,11 +95,11 @@ app.get("/api/deals", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("deals")
-      .select("id, country_iso2, continent, deal_type, partner_name, updated_at")
+      .select("id, country_iso2, continent, deal_type, partner_name, show_on_map, updated_at")
       .order("updated_at", { ascending: false })
       .order("id", { ascending: false });
 
-    if (error) return bad(res, 500, `Supabase SELECT failed`, { detail: error.message });
+    if (error) return bad(res, 500, "Supabase SELECT failed", { detail: error.message });
     res.json({ ok: true, data: data || [] });
   } catch (e) {
     return bad(res, 500, "Server error", { detail: String(e?.message || e) });
@@ -128,7 +118,6 @@ app.post("/api/deals", async (req, res) => {
   if (!partner_name) return bad(res, 400, "partner_name required");
 
   try {
-    // INSERT (no upsert here — duplicates controlled by unique key if you choose to upsert)
     const { data, error } = await supabase
       .from("deals")
       .insert([
@@ -137,6 +126,7 @@ app.post("/api/deals", async (req, res) => {
           country_iso2,
           deal_type,
           partner_name,
+          show_on_map: true,
           updated_at: nowIso(),
         },
       ])
@@ -161,6 +151,12 @@ app.put("/api/deals/:id", async (req, res) => {
   const deal_type = normType(req.body?.deal_type || "TBD");
   const partner_name = String(req.body?.partner_name || "").trim();
 
+  // ✅ 핵심: show_on_map 안전 처리 (없으면 true 유지)
+  const show_on_map =
+    (req.body?.show_on_map === undefined || req.body?.show_on_map === null)
+      ? true
+      : Boolean(req.body.show_on_map);
+
   if (!country_iso2) return bad(res, 400, "country_iso2 required");
   if (!partner_name) return bad(res, 400, "partner_name required");
 
@@ -172,6 +168,7 @@ app.put("/api/deals/:id", async (req, res) => {
         country_iso2,
         deal_type,
         partner_name,
+        show_on_map,
         updated_at: nowIso(),
       })
       .eq("id", id);
@@ -219,7 +216,6 @@ app.put("/api/labels", async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (items.length === 0) return res.json({ ok: true, upserted: 0 });
 
-  // label_positions.key 는 PK여야 upsert가 안정적입니다.
   const payload = [];
   for (const it of items) {
     const row = {
@@ -237,10 +233,7 @@ app.put("/api/labels", async (req, res) => {
   }
 
   try {
-    const { error } = await supabase
-      .from("label_positions")
-      .upsert(payload, { onConflict: "key" });
-
+    const { error } = await supabase.from("label_positions").upsert(payload, { onConflict: "key" });
     if (error) return bad(res, 500, "Supabase UPSERT labels failed", { detail: error.message });
     res.json({ ok: true, upserted: payload.length });
   } catch (e) {

@@ -311,6 +311,7 @@
     try {
       const dj = await fetchJSON(DEALS_API, { credentials: "same-origin" });
       deals = Array.isArray(dj?.data) ? dj.data : [];
+      deals = deals.filter(d => d.show_on_map !== false);
     } catch (e) {
       showError("Map init failed", [`Deals API error: ${String(e.message || e)}`]);
       return;
