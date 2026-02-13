@@ -50,9 +50,6 @@
 
   const TYPE_RANK = { EXCLUSIVE: 0, MLD: 1, GLD: 2, TBD: 3 };
 
-  // ✅ Projection id: prevents saved label_positions from being reused across projections
-  const PROJ_ID = "equalearth-pacific-v1";
-
   function escapeHTML(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
@@ -201,10 +198,8 @@
 
 
 
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-
-function labelKey(iso2, partner) {
-    return `${PROJ_ID}:${iso2}:${partner}`;
+  function labelKey(iso2, partner) {
+    return `${iso2}:${partner}`;
   }
   function getIso2(f) {
     return String(f.properties?.iso2 || "").trim().toUpperCase();
@@ -316,6 +311,7 @@ function labelKey(iso2, partner) {
     try {
       const dj = await fetchJSON(DEALS_API, { credentials: "same-origin" });
       deals = Array.isArray(dj?.data) ? dj.data : [];
+      deals = deals.filter(d => d.show_on_map !== false);
     } catch (e) {
       showError("Map init failed", [`Deals API error: ${String(e.message || e)}`]);
       return;
@@ -351,10 +347,8 @@ function labelKey(iso2, partner) {
 
     const wrap = elMap.getBoundingClientRect();
     const width = Math.max(860, Math.floor(wrap.width || 1000));
-    // ✅ Keep the SVG background height tightly matched to the map area (no huge empty space)
-    // We cap the canvas height to stay within one screen and use a stable width-based fallback.
-    const vh = Math.max(700, Math.floor(window.innerHeight || 900));
-    const height = Math.max(560, Math.min(Math.floor(vh * 0.72), Math.floor(width * 0.62)));
+    const height = Math.max(640, Math.floor(wrap.height || 700));
+
     svg = d3.select(elMap)
       .append("svg")
       .attr("width", width)
@@ -367,19 +361,14 @@ function labelKey(iso2, partner) {
       .attr("width", width).attr("height", height)
       .attr("fill", "#fbf7ef");
 
-    projection = d3.geoEqualEarth()
-      .rotate([-155, 0]); // ✅ Equal Earth (flat) + Americas on the right
+    projection = d3.geoNaturalEarth1();
     path = d3.geoPath(projection);
 
-    const fitFeatures = features.filter(f => String(f?.properties?.name || "").trim() !== "Antarctica");
-    const fc = { type: "FeatureCollection", features: fitFeatures };
+    const fc = { type: "FeatureCollection", features };
     // padding to avoid top clipping
-    const padX = Math.max(18, Math.round(width * 0.03));
-    const padY = Math.max(18, Math.round(height * 0.05));
-    const leftPad = padX * 2;
-    const rightPad = padX;
-    projection.fitExtent([[leftPad, padY], [width - rightPad, height - padY]], fc);
-gCountries = svg.append("g").attr("class", "countries");
+    projection.fitExtent([[18, 22], [width - 18, height - 18]], fc);
+
+    gCountries = svg.append("g").attr("class", "countries");
     gLabels = svg.append("g").attr("class", "labels");
 
     gCountries.selectAll("path")
