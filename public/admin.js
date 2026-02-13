@@ -1,4 +1,4 @@
-// public/admin.js (FULL REPLACE) v20260213-toggle-fix2
+// public/admin.js (FULL REPLACE) v20260213-admin-tidy
 (() => {
   const $ = (s) => document.querySelector(s);
 
@@ -31,8 +31,6 @@
   // world-atlas list
   let worldCountries = []; // [{iso2, name}]
   let iso2ToName = new Map();
-
-  // ✅ iso2 -> continent (sub-continents)
   let iso2ToContinent = new Map();
 
   // db rows
@@ -44,9 +42,11 @@
   // selection & sorting
   const selectedIds = new Set();
 
-  // ✅ FIX: 기본 정렬을 updated_at -> id 로 변경 (토글해도 줄이 위로 튀지 않음)
+  // ✅ 안정성: 기본 정렬은 id desc (updated_at 때문에 행이 위로 튀는 착시 방지)
   let sortKey = "id";
   let sortDir = "desc"; // asc|desc
+
+  const TYPE_RANK = { EXCLUSIVE: 0, MLD: 1, GLD: 2, TBD: 3 };
 
   // ---------- helpers ----------
   function escapeHTML(str) {
@@ -87,6 +87,34 @@
 
   async function delJSON(url) {
     return fetchJSON(url, { method: "DELETE", credentials: "same-origin" });
+  }
+
+  function getColCount() {
+    // ✅ 헤더 칼럼 수 기준으로 colspan 자동 계산 (없으면 8칸)
+    const n = table?.querySelectorAll("thead th")?.length;
+    return Number.isFinite(n) && n > 0 ? n : 8;
+  }
+
+  function findScrollContainer() {
+    // tbody가 들어있는 스크롤 영역 찾기
+    // (레이아웃이 바뀌어도 최대한 따라가도록)
+    if (!tbody) return null;
+    let p = tbody.parentElement;
+    for (let i = 0; i < 6 && p; i++) {
+      const style = window.getComputedStyle(p);
+      const oy = style.overflowY;
+      if (oy === "auto" || oy === "scroll") return p;
+      p = p.parentElement;
+    }
+    return tbody.parentElement;
+  }
+
+  function flashRow(id) {
+    if (!tbody || !id) return;
+    const tr = tbody.querySelector(`tr[data-id="${id}"]`);
+    if (!tr) return;
+    tr.classList.add("flash");
+    setTimeout(() => tr.classList.remove("flash"), 650);
   }
 
   function setAuthUI() {
@@ -245,7 +273,7 @@
 
     const prevPage = page;
     const prevQ = String(searchBox?.value || "");
-    const scroller = tbody?.closest(".tableWrap") || tbody?.parentElement; // 구조 모르면 이게 최선
+    const scroller = findScrollContainer();
     const prevScrollTop = keepScroll && scroller ? scroller.scrollTop : 0;
 
     const j = await fetchJSON("/api/deals", { credentials: "same-origin" });
@@ -259,24 +287,15 @@
       };
     });
 
-    // selection은 유지하지 않는 게 안전 (데이터 변경 후 id mismatch 방지)
     selectedIds.clear();
     if (chkAll) chkAll.checked = false;
 
-    // 검색어 복원
     if (searchBox) searchBox.value = prevQ;
 
     applyView({ keepPage: keepPage ? prevPage : 1 });
 
-    // 스크롤 복원
     if (keepScroll && scroller) scroller.scrollTop = prevScrollTop;
-
-    // 특정 row 강조/스크롤 (원하면)
-    if (focusId && tbody) {
-      const tr = tbody.querySelector(`tr[data-id="${focusId}"]`);
-      if (tr) tr.classList.add("flash");
-      setTimeout(() => { tr && tr.classList.remove("flash"); }, 700);
-    }
+    if (focusId) flashRow(focusId);
 
     setAuthUI();
   }
@@ -297,29 +316,49 @@
     });
 
     sortView();
-
     page = Math.max(1, Number(keepPage) || 1);
     render();
   }
 
-  function sortView() {
-    const dir = sortDir === "asc" ? 1 : -1;
+ function sortView() {
+  const dir = sortDir === "asc" ? 1 : -1;
 
-    view.sort((a, b) => {
-      const ka = a?.[sortKey];
-      const kb = b?.[sortKey];
+  view.sort((a, b) => {
+    const ka = a?.[sortKey];
+    const kb = b?.[sortKey];
 
-      if (sortKey === "id") return (Number(ka) - Number(kb)) * dir;
+    // 1) id 숫자 정렬
+    if (sortKey === "id") return (Number(ka) - Number(kb)) * dir;
 
-      if (String(sortKey).endsWith("_at")) {
-        const ta = Date.parse(String(ka || "")) || 0;
-        const tb = Date.parse(String(kb || "")) || 0;
-        return (ta - tb) * dir;
-      }
+    // 2) *_at 날짜 정렬
+    if (String(sortKey).endsWith("_at")) {
+      const ta = Date.parse(String(ka || "")) || 0;
+      const tb = Date.parse(String(kb || "")) || 0;
+      return (ta - tb) * dir;
+    }
 
-      return String(ka ?? "").localeCompare(String(kb ?? "")) * dir;
-    });
-  }
+    // 3) ✅ show_on_map (ON/OFF) 정렬 추가
+    // - desc(기본): ON(1) 먼저
+    // - asc: OFF(0) 먼저
+    if (sortKey === "show_on_map") {
+      const ba = (a.show_on_map ?? true) ? 1 : 0;
+      const bb = (b.show_on_map ?? true) ? 1 : 0;
+      return (ba - bb) * dir;
+    }
+
+    // 4) deal_type는 rank 기준 정렬
+    if (sortKey === "deal_type") {
+      const TYPE_RANK = { EXCLUSIVE: 0, MLD: 1, GLD: 2, TBD: 3 };
+      const ra = TYPE_RANK[String(ka || "").toUpperCase()] ?? 999;
+      const rb = TYPE_RANK[String(kb || "").toUpperCase()] ?? 999;
+      return (ra - rb) * dir;
+    }
+
+    // 5) 나머지는 문자열 정렬
+    return String(ka ?? "").localeCompare(String(kb ?? "")) * dir;
+  });
+}
+
 
   function setSort(key) {
     if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
@@ -352,7 +391,7 @@
 
     if (pageRows.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="9" class="muted" style="padding:18px;">No rows</td>`;
+      tr.innerHTML = `<td colspan="${getColCount()}" class="muted" style="padding:18px;">No rows</td>`;
       tbody.appendChild(tr);
       return;
     }
@@ -435,7 +474,6 @@
       dealSel.addEventListener("change", () => { r.deal_type = dealSel.value; markDirty(); });
       partnerInp.addEventListener("input", () => { r.partner_name = partnerInp.value; markDirty(); });
 
-      // ✅ FIX: 토글 후에도 "현재 페이지/스크롤" 유지 + id 정렬이라 줄이 안 튐
       mapToggleBtn.addEventListener("click", async () => {
         if (!authed) return;
 
@@ -450,12 +488,10 @@
             partner_name: r.partner_name,
             show_on_map: next,
           });
-
           await loadDeals({ keepPage: true, keepScroll: true, focusId: r.id });
         } catch (e) {
           alert(String(e.message || e));
         } finally {
-          // loadDeals가 render까지 하므로 여기선 단순 복구만
           mapToggleBtn.disabled = !authed;
         }
       });

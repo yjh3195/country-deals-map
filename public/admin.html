@@ -104,19 +104,28 @@
 
         <div class="tableWrap">
           <table id="dbTable" class="table">
-            <thead>
-              <tr>
-                <th style="width:44px;">
-                  <input id="chkAll" type="checkbox" />
-                </th>
-                <th data-sort="continent">Continent <span class="muted">↕</span></th>
-                <th data-sort="country_name">Country <span class="muted">↕</span></th>
-                <th data-sort="deal_type">Deal <span class="muted">↕</span></th>
-                <th data-sort="partner_name">Partner <span class="muted">↕</span></th>
-                <th data-sort="updated_at">Updated <span class="muted">↕</span></th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+           <thead>
+  <tr>
+    <th style="width:44px;">
+      <input id="chkAll" type="checkbox" />
+    </th>
+    <th data-sort="continent">Continent <span class="muted">↕</span></th>
+    <th data-sort="country_name">Country <span class="muted">↕</span></th>
+    <th data-sort="deal_type">Deal <span class="muted">↕</span></th>
+    <th data-sort="partner_name">Partner <span class="muted">↕</span></th>
+    <th data-sort="updated_at">Updated <span class="muted">↕</span></th>
+<th data-sort="show_on_map">Map ↕</th>
+
+    
+
+    <th style="width:170px;">Actions</th>
+  </tr>
+</thead>
+
+<tbody id="dbTbody">
+  <tr><td colspan="8" class="muted" style="padding:18px;">Loading…</td></tr>
+</tbody>
+
 
             <tbody id="dbTbody">
               <tr><td colspan="7" class="muted" style="padding:18px;">Loading…</td></tr>
