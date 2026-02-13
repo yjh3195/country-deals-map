@@ -1,4 +1,4 @@
-// public/admin.js (FULL REPLACE) v20260211-map-toggle
+// public/admin.js (FULL REPLACE) v20260213-toggle-fix2
 (() => {
   const $ = (s) => document.querySelector(s);
 
@@ -43,7 +43,9 @@
 
   // selection & sorting
   const selectedIds = new Set();
-  let sortKey = "updated_at";
+
+  // ✅ FIX: 기본 정렬을 updated_at -> id 로 변경 (토글해도 줄이 위로 튀지 않음)
+  let sortKey = "id";
   let sortDir = "desc"; // asc|desc
 
   // ---------- helpers ----------
@@ -108,7 +110,7 @@
     try {
       await postJSON("/api/login", { password: pw });
       await refreshAuth();
-      await loadDeals();
+      await loadDeals({ keepPage: true, keepScroll: true });
     } catch (e) {
       alert(String(e.message || e));
     }
@@ -122,25 +124,19 @@
     render();
   }
 
-  // ---------- A안: 좌표 기반 sub-continent 분류 ----------
+  // ---------- continents ----------
   function guessContinentFromLonLat(lon, lat) {
     if (lat <= -60) return "Antarctica";
-
-    if ((lon >= 110 && lon <= 180 && lat >= -50 && lat <= 25) || (lon <= -130 && lat >= -25 && lat <= 25)) {
-      return "Oceania";
-    }
-
+    if ((lon >= 110 && lon <= 180 && lat >= -50 && lat <= 25) || (lon <= -130 && lat >= -25 && lat <= 25)) return "Oceania";
     if (lon <= -30) {
       if (lat >= 15) return "North America";
       if (lat >= 7) return "Central America";
       return "South America";
     }
-
     if (lon >= -25 && lon <= 60 && lat >= -40 && lat <= 37) return "Africa";
     if (lon >= -30 && lon <= 60 && lat >= 35 && lat <= 72) return "Europe";
     if (lon >= 34 && lon <= 60 && lat >= 12 && lat <= 38) return "Middle East";
     if (lon >= 60 && lon <= 180 && lat >= 5 && lat <= 80) return "Asia";
-
     return "Unknown";
   }
 
@@ -181,7 +177,6 @@
   function rebuildCountryDropdown(continent) {
     if (!newCountry) return;
     const list = getCountryListFiltered(continent);
-
     newCountry.innerHTML = "";
     for (const c of list) {
       const opt = document.createElement("option");
@@ -201,10 +196,6 @@
     const topo = await fetchJSON("/data/countries-110m.json");
     const n3map = await fetchJSON("/data/iso_n3_to_iso2.json");
 
-    if (!window.topojson || !window.d3) {
-      console.warn("Admin: missing topojson/d3 libs. Continents will be Unknown.");
-    }
-
     const geoms = topo?.objects?.countries?.geometries || [];
     const mapIso2Name = new Map();
     const mapIso2Cont = new Map();
@@ -212,9 +203,7 @@
     let features = [];
     try {
       features = window.topojson && topo ? window.topojson.feature(topo, topo.objects.countries).features : [];
-    } catch {
-      features = [];
-    }
+    } catch { features = []; }
 
     for (const g of geoms) {
       const n3 = String(g.id || "").trim();
@@ -223,34 +212,24 @@
       if (iso2 && name && !mapIso2Name.has(iso2)) mapIso2Name.set(iso2, name);
     }
 
-    const extra = [
-      { iso2: "HK", name: "Hong Kong" },
-      { iso2: "SG", name: "Singapore" },
-    ];
-    for (const e of extra) {
-      if (!mapIso2Name.has(e.iso2)) mapIso2Name.set(e.iso2, e.name);
-    }
+    for (const [k, v] of Object.entries(CONTINENT_OVERRIDES)) mapIso2Cont.set(k, v);
 
     if (features.length && window.d3) {
       for (const f of features) {
         const n3 = String(f.id || "").trim();
         const iso2 = String(n3map[n3] || "").trim().toUpperCase();
         if (!iso2) continue;
-
         let lon = 0, lat = 0;
         try {
           const c = window.d3.geoCentroid(f);
           lon = Number(c?.[0]);
           lat = Number(c?.[1]);
         } catch {}
-
         let cont = guessContinentFromLonLat(lon, lat);
         if (CONTINENT_OVERRIDES[iso2]) cont = CONTINENT_OVERRIDES[iso2];
         mapIso2Cont.set(iso2, cont);
       }
     }
-
-    for (const [k, v] of Object.entries(CONTINENT_OVERRIDES)) mapIso2Cont.set(k, v);
 
     iso2ToName = mapIso2Name;
     iso2ToContinent = mapIso2Cont;
@@ -261,27 +240,50 @@
   }
 
   // ---------- deals ----------
-  async function loadDeals() {
+  async function loadDeals(opts = {}) {
+    const { keepPage = false, keepScroll = false, focusId = null } = opts;
+
+    const prevPage = page;
+    const prevQ = String(searchBox?.value || "");
+    const scroller = tbody?.closest(".tableWrap") || tbody?.parentElement; // 구조 모르면 이게 최선
+    const prevScrollTop = keepScroll && scroller ? scroller.scrollTop : 0;
+
     const j = await fetchJSON("/api/deals", { credentials: "same-origin" });
     rows = (j.data || []).map((r) => {
       const iso2 = String(r.country_iso2 || "").toUpperCase();
       return {
         ...r,
-        // ✅ backward compat: if missing, treat as true
         show_on_map: (r.show_on_map === undefined || r.show_on_map === null) ? true : !!r.show_on_map,
         country_name: iso2ToName.get(iso2) || iso2,
         _dirty: false,
       };
     });
 
+    // selection은 유지하지 않는 게 안전 (데이터 변경 후 id mismatch 방지)
     selectedIds.clear();
     if (chkAll) chkAll.checked = false;
-    applyView();
+
+    // 검색어 복원
+    if (searchBox) searchBox.value = prevQ;
+
+    applyView({ keepPage: keepPage ? prevPage : 1 });
+
+    // 스크롤 복원
+    if (keepScroll && scroller) scroller.scrollTop = prevScrollTop;
+
+    // 특정 row 강조/스크롤 (원하면)
+    if (focusId && tbody) {
+      const tr = tbody.querySelector(`tr[data-id="${focusId}"]`);
+      if (tr) tr.classList.add("flash");
+      setTimeout(() => { tr && tr.classList.remove("flash"); }, 700);
+    }
+
     setAuthUI();
   }
 
-  function applyView() {
+  function applyView({ keepPage = 1 } = {}) {
     const q = String(searchBox?.value || "").trim().toLowerCase();
+
     view = rows.filter((r) => {
       if (!q) return true;
       return (
@@ -295,14 +297,28 @@
     });
 
     sortView();
-    page = 1;
+
+    page = Math.max(1, Number(keepPage) || 1);
     render();
   }
 
   function sortView() {
     const dir = sortDir === "asc" ? 1 : -1;
-    const getVal = (r) => String(r[sortKey] ?? "");
-    view.sort((a, b) => getVal(a).localeCompare(getVal(b)) * dir);
+
+    view.sort((a, b) => {
+      const ka = a?.[sortKey];
+      const kb = b?.[sortKey];
+
+      if (sortKey === "id") return (Number(ka) - Number(kb)) * dir;
+
+      if (String(sortKey).endsWith("_at")) {
+        const ta = Date.parse(String(ka || "")) || 0;
+        const tb = Date.parse(String(kb || "")) || 0;
+        return (ta - tb) * dir;
+      }
+
+      return String(ka ?? "").localeCompare(String(kb ?? "")) * dir;
+    });
   }
 
   function setSort(key) {
@@ -320,7 +336,6 @@
   function render() {
     updateSelectionUI();
     if (!tbody) return;
-
     tbody.innerHTML = "";
 
     const total = view.length;
@@ -337,7 +352,7 @@
 
     if (pageRows.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="8" class="muted" style="padding:18px;">No rows</td>`;
+      tr.innerHTML = `<td colspan="9" class="muted" style="padding:18px;">No rows</td>`;
       tbody.appendChild(tr);
       return;
     }
@@ -354,58 +369,38 @@
 
       const isSelected = selectedIds.has(r.id);
 
-      const countryOptions = worldCountries
-        .map((c) => {
-          const selected = String(r.country_iso2 || "").toUpperCase() === c.iso2 ? "selected" : "";
-          return `<option value="${c.iso2}" ${selected}>${escapeHTML(c.name)} (${c.iso2})</option>`;
-        })
-        .join("");
+      const countryOptions = worldCountries.map((c) => {
+        const selected = String(r.country_iso2 || "").toUpperCase() === c.iso2 ? "selected" : "";
+        return `<option value="${c.iso2}" ${selected}>${escapeHTML(c.name)} (${c.iso2})</option>`;
+      }).join("");
 
-      const dealOptions = ["EXCLUSIVE", "MLD", "GLD", "TBD"]
-        .map((d) => `<option value="${d}" ${String(r.deal_type || "").toUpperCase() === d ? "selected" : ""}>${d}</option>`)
-        .join("");
+      const dealOptions = ["EXCLUSIVE", "MLD", "GLD", "TBD"].map((d) =>
+        `<option value="${d}" ${String(r.deal_type || "").toUpperCase() === d ? "selected" : ""}>${d}</option>`
+      ).join("");
 
       tr.innerHTML = `
         <td class="col-check"><input class="rowCheck" type="checkbox" ${isSelected ? "checked" : ""}></td>
-
-        <td>
-          <select class="input input--sm contSel">
-            ${contOptionsHTML}
-          </select>
-        </td>
-
-        <td>
-          <select class="input input--sm countrySel">${countryOptions}</select>
-        </td>
-
-        <td>
-          <select class="input input--sm dealSel">${dealOptions}</select>
-        </td>
-
-        <td>
-          <input class="input input--sm partnerInp" value="${escapeHTML(r.partner_name || "")}">
-        </td>
-
+        <td><select class="input input--sm contSel">${contOptionsHTML}</select></td>
+        <td><select class="input input--sm countrySel">${countryOptions}</select></td>
+        <td><select class="input input--sm dealSel">${dealOptions}</select></td>
+        <td><input class="input input--sm partnerInp" value="${escapeHTML(r.partner_name || "")}"></td>
         <td class="muted small">${escapeHTML(r.updated_at || "")}</td>
-
         <td>
-          <button class="btnMini mapToggleBtn ${r.show_on_map ? "primary" : ""}" ${!authed ? "disabled" : ""}>
+          <button type="button" class="btnMini mapToggleBtn ${r.show_on_map ? "primary" : ""}" ${!authed ? "disabled" : ""}>
             ${r.show_on_map ? "ON" : "OFF"}
           </button>
         </td>
-
         <td class="col-actions">
           <div style="display:flex; gap:8px; align-items:center; white-space:nowrap;">
-            <button class="btnMini primary saveBtn" ${(!authed || !r._dirty) ? "disabled" : ""}>Save</button>
-            <button class="btnMini danger delBtn" ${!authed ? "disabled" : ""}>Delete</button>
+            <button type="button" class="btnMini primary saveBtn" ${(!authed || !r._dirty) ? "disabled" : ""}>Save</button>
+            <button type="button" class="btnMini danger delBtn" ${!authed ? "disabled" : ""}>Delete</button>
           </div>
         </td>
       `;
 
       const rowChk = tr.querySelector(".rowCheck");
       rowChk.addEventListener("change", () => {
-        if (rowChk.checked) selectedIds.add(r.id);
-        else selectedIds.delete(r.id);
+        if (rowChk.checked) selectedIds.add(r.id); else selectedIds.delete(r.id);
         updateSelectionUI();
       });
 
@@ -418,9 +413,7 @@
       const mapToggleBtn = tr.querySelector(".mapToggleBtn");
 
       const inferred = inferContinentFromIso2(r.country_iso2);
-      contSel.value = CONTINENT_ORDER.includes(String(r.continent)) && r.continent !== "All"
-        ? r.continent
-        : inferred;
+      contSel.value = (CONTINENT_ORDER.includes(String(r.continent)) && r.continent !== "All") ? r.continent : inferred;
 
       function markDirty() {
         r._dirty = true;
@@ -433,19 +426,17 @@
       countrySel.addEventListener("change", () => {
         r.country_iso2 = countrySel.value;
         r.country_name = iso2ToName.get(String(r.country_iso2 || "").toUpperCase()) || r.country_iso2;
-
         const autoC = inferContinentFromIso2(r.country_iso2);
         r.continent = autoC;
         contSel.value = autoC;
-
         markDirty();
       });
 
       dealSel.addEventListener("change", () => { r.deal_type = dealSel.value; markDirty(); });
       partnerInp.addEventListener("input", () => { r.partner_name = partnerInp.value; markDirty(); });
 
-      // ✅ Map ON/OFF toggle
-      mapToggleBtn?.addEventListener("click", async () => {
+      // ✅ FIX: 토글 후에도 "현재 페이지/스크롤" 유지 + id 정렬이라 줄이 안 튐
+      mapToggleBtn.addEventListener("click", async () => {
         if (!authed) return;
 
         const next = !r.show_on_map;
@@ -460,13 +451,12 @@
             show_on_map: next,
           });
 
-          r.show_on_map = next;
-          mapToggleBtn.textContent = next ? "ON" : "OFF";
-          mapToggleBtn.classList.toggle("primary", next);
+          await loadDeals({ keepPage: true, keepScroll: true, focusId: r.id });
         } catch (e) {
           alert(String(e.message || e));
         } finally {
-          mapToggleBtn.disabled = !authed ? true : false;
+          // loadDeals가 render까지 하므로 여기선 단순 복구만
+          mapToggleBtn.disabled = !authed;
         }
       });
 
@@ -481,7 +471,7 @@
             partner_name: r.partner_name,
             show_on_map: r.show_on_map,
           });
-          await loadDeals();
+          await loadDeals({ keepPage: true, keepScroll: true, focusId: r.id });
         } catch (e) {
           alert(String(e.message || e));
           saveBtn.disabled = false;
@@ -494,7 +484,7 @@
         try {
           await delJSON(`/api/deals/${r.id}`);
           selectedIds.delete(r.id);
-          await loadDeals();
+          await loadDeals({ keepPage: true, keepScroll: true });
         } catch (e) {
           alert(String(e.message || e));
         }
@@ -521,7 +511,7 @@
     try {
       await postJSON("/api/deals", { continent, country_iso2, deal_type, partner_name });
       newPartner.value = "";
-      await loadDeals();
+      await loadDeals({ keepPage: true, keepScroll: true });
     } catch (e) {
       alert(String(e.message || e));
     } finally {
@@ -539,7 +529,7 @@
       for (const id of [...selectedIds]) await delJSON(`/api/deals/${id}`);
       selectedIds.clear();
       chkAll.checked = false;
-      await loadDeals();
+      await loadDeals({ keepPage: true, keepScroll: true });
     } catch (e) {
       alert(String(e.message || e));
     } finally {
@@ -550,11 +540,11 @@
   // ---------- events ----------
   btnLogin?.addEventListener("click", doLogin);
   btnLogout?.addEventListener("click", doLogout);
-  btnReload?.addEventListener("click", loadDeals);
+  btnReload?.addEventListener("click", () => loadDeals({ keepPage: true, keepScroll: true }));
   btnAdd?.addEventListener("click", createDeal);
   btnDeleteSelected?.addEventListener("click", deleteSelected);
 
-  searchBox?.addEventListener("input", applyView);
+  searchBox?.addEventListener("input", () => applyView({ keepPage: 1 }));
 
   pageSizeSel?.addEventListener("change", () => {
     pageSize = Number(pageSizeSel.value) || 50;
@@ -563,12 +553,7 @@
     render();
   });
 
-  btnPrev?.addEventListener("click", () => {
-    page = Math.max(1, page - 1);
-    chkAll.checked = false;
-    render();
-  });
-
+  btnPrev?.addEventListener("click", () => { page = Math.max(1, page - 1); chkAll.checked = false; render(); });
   btnNext?.addEventListener("click", () => {
     const totalPages = Math.max(1, Math.ceil(view.length / pageSize));
     page = Math.min(totalPages, page + 1);
@@ -593,18 +578,7 @@
     th.addEventListener("click", () => setSort(th.dataset.sort));
   });
 
-  newContinent?.addEventListener("change", () => {
-    rebuildCountryDropdown(newContinent.value);
-  });
-
-  newCountry?.addEventListener("change", () => {
-    const iso2 = newCountry.value;
-    const c = inferContinentFromIso2(iso2);
-    if (newContinent.value === "All") return;
-    newContinent.value = c;
-    rebuildCountryDropdown(c);
-    newCountry.value = iso2;
-  });
+  newContinent?.addEventListener("change", () => { rebuildCountryDropdown(newContinent.value); });
 
   // ---------- init ----------
   (async function init() {
@@ -614,7 +588,7 @@
       rebuildCountryDropdown("All");
 
       await refreshAuth();
-      await loadDeals();
+      await loadDeals({ keepPage: true, keepScroll: true });
     } catch (e) {
       console.error(e);
       alert(`Admin init failed:\n${String(e.message || e)}`);

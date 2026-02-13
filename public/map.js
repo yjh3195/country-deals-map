@@ -214,32 +214,41 @@ function labelKey(iso2, partner) {
   }
 
   function normalizeDeals() {
-    dealsByIso2 = new Map();
+  dealsByIso2 = new Map();
 
-    for (const d of deals) {
-      const iso2 = String(d.country_iso2 || "").trim().toUpperCase();
-      if (!iso2) continue;
+  for (const d of deals) {
+    const iso2 = String(d.country_iso2 || "").trim().toUpperCase();
+    if (!iso2) continue;
 
-      const type = String(d.deal_type || "").trim().toUpperCase();
-      if (!TYPE_RANK.hasOwnProperty(type)) continue;
+    const type = String(d.deal_type || "").trim().toUpperCase();
+    if (!TYPE_RANK.hasOwnProperty(type)) continue;
 
-      // ✅ (4) per-type filter
-      if (!showTypes.has(type)) continue;
+    // 🔥🔥🔥 핵심 추가: show_on_map 필터
+    const show = (d.show_on_map ?? true) === true;
+    if (!show) continue;
 
-      const item = {
-        id: d.id,
-        deal_type: type,
-        partner_name: String(d.partner_name || "").trim(),
-      };
+    // 기존 타입 필터
+    if (!showTypes.has(type)) continue;
 
-      if (!dealsByIso2.has(iso2)) dealsByIso2.set(iso2, []);
-      dealsByIso2.get(iso2).push(item);
-    }
+    const item = {
+      id: d.id,
+      deal_type: type,
+      partner_name: String(d.partner_name || "").trim(),
+    };
 
-    for (const [iso2, arr] of dealsByIso2.entries()) {
-      arr.sort((a, b) => (TYPE_RANK[a.deal_type] - TYPE_RANK[b.deal_type]) || a.partner_name.localeCompare(b.partner_name));
-    }
+    if (!dealsByIso2.has(iso2)) dealsByIso2.set(iso2, []);
+    dealsByIso2.get(iso2).push(item);
   }
+
+  for (const [iso2, arr] of dealsByIso2.entries()) {
+    arr.sort(
+      (a, b) =>
+        (TYPE_RANK[a.deal_type] - TYPE_RANK[b.deal_type]) ||
+        a.partner_name.localeCompare(b.partner_name)
+    );
+  }
+}
+
 
   function bboxArea(feat) {
     const b = path.bounds(feat);
