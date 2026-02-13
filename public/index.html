@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Mary&May Global Distribution Status</title>
-  <link rel="stylesheet" href="/style.css?v=202602130229" />
+
+  <!-- CSS 캐시 방지 -->
+  <link rel="stylesheet" href="/style.css?v=20260213-03" />
 </head>
 
 <body>
@@ -13,7 +15,9 @@
     <header class="topbar card">
       <div>
         <h1>Mary&May Global Distribution Status</h1>
-        <div class="sub">Exclusive=Red · MLD=Yellow · GLD=Green · TBD=Purple · Hover for details</div>
+        <div class="sub">
+          Exclusive=Red · MLD=Yellow · GLD=Green · TBD=Purple · Hover for details
+        </div>
       </div>
 
       <div class="topActions">
@@ -33,13 +37,15 @@
     </header>
 
     <div class="layout">
+
+      <!-- Map Area -->
       <div id="mapWrap" class="card">
         <div id="mapError" style="display:none;"></div>
         <div id="map"></div>
         <div id="tooltip" class="tooltip"></div>
       </div>
 
-      <!-- ✅ 패널을 하단으로 -->
+      <!-- Bottom Panel -->
       <aside class="sidePanel card">
         <div id="panelBody" class="panelBody muted">No selection</div>
       </aside>
@@ -48,8 +54,12 @@
 
   </div>
 
+  <!-- Libraries -->
   <script src="/vendor/d3.v7.min.js"></script>
   <script src="/vendor/topojson-client.min.js"></script>
-  <script src="/map.js?v=202602130229"></script>
+
+  <!-- map.js 캐시 완전 회피용 버전값 -->
+  <script src="/map.js?v=20260213-03"></script>
+
 </body>
 </html>

@@ -1,9 +1,11 @@
-// public/map.js v20260122-2
+// public/map.js v20260213-3
 // Fixes:
 // (1) leader line crossing text -> auto switch text left/right (away from centroid)
 // (2) tooltip positioning -> relative to mapWrap (not pageX drift)
 // (3) TBD visible (default ON)
 // (4) per-type filter toggles (EXCLUSIVE/MLD/GLD/TBD)
+// (5) ✅ show_on_map OFF -> remove from map+labels
+// (6) ✅ label_positions saved as centroid-based offset(dx,dy) for cross-device consistency
 
 (() => {
   const MAP_JSON = "/data/countries-110m.json";
@@ -50,8 +52,9 @@
 
   const TYPE_RANK = { EXCLUSIVE: 0, MLD: 1, GLD: 2, TBD: 3 };
 
-  // ✅ Projection id: prevents saved label_positions from being reused across projections
-  const PROJ_ID = "equalearth-pacific-v1";
+  // ✅ Projection id: prevents saved label_positions from being reused across incompatible schemes
+  // v3-offset: label x,y are saved as centroid-based offsets (dx, dy), not absolute px.
+  const PROJ_ID = "equalearth-pacific-v3-offset";
 
   function escapeHTML(s) {
     return String(s ?? "")
@@ -131,7 +134,7 @@
     return `<div class="title">${escapeHTML(countryName)}</div>${rows}`;
   }
 
-  // ✅ (2) Tooltip positioning: relative to mapWrap
+  // ✅ Tooltip positioning: relative to mapWrap
   function setTooltip(event, html) {
     if (!elTooltip || !elMapWrap) return;
     const rect = elMapWrap.getBoundingClientRect();
@@ -157,53 +160,51 @@
     elTooltip.innerHTML = "";
   }
 
- function setPanel(countryName, iso2, arr) {
-  if (!elPanelBody) return;
+  function setPanel(countryName, iso2, arr) {
+    if (!elPanelBody) return;
 
-  if (!countryName) {
-    elPanelBody.classList.add("muted");
-    elPanelBody.innerHTML = "No selection";
-    return;
-  }
+    if (!countryName) {
+      elPanelBody.classList.add("muted");
+      elPanelBody.innerHTML = "No selection";
+      return;
+    }
 
-  const list = Array.isArray(arr) ? arr : [];
+    const list = Array.isArray(arr) ? arr : [];
 
-  elPanelBody.classList.remove("muted");
+    elPanelBody.classList.remove("muted");
 
-  if (list.length === 0) {
+    if (list.length === 0) {
+      elPanelBody.innerHTML = `
+        <div style="font-weight:950; margin-bottom:8px;">
+          ${escapeHTML(countryName)} ${iso2 ? `(${escapeHTML(iso2)})` : ""}
+        </div>
+        <div class="muted">No deals</div>
+      `;
+      return;
+    }
+
+    // Representative 제거 + All partners 가로
     elPanelBody.innerHTML = `
       <div style="font-weight:950; margin-bottom:8px;">
         ${escapeHTML(countryName)} ${iso2 ? `(${escapeHTML(iso2)})` : ""}
       </div>
-      <div class="muted">No deals</div>
+
+      <div style="font-weight:850; margin-bottom:6px;">All partners</div>
+
+      <div class="partnersRow">
+        ${list.map(d => `
+          <span class="partnerItem">
+            <span class="badge ${badgeClass(d.deal_type)}">${dealLetter(d.deal_type)}</span>
+            <span class="partnerName">${escapeHTML(d.partner_name)}</span>
+          </span>
+        `).join("")}
+      </div>
     `;
-    return;
   }
 
-  // ✅ Representative 제거 + All partners 가로 (아이콘+거래처명만)
-  elPanelBody.innerHTML = `
-    <div style="font-weight:950; margin-bottom:8px;">
-      ${escapeHTML(countryName)} ${iso2 ? `(${escapeHTML(iso2)})` : ""}
-    </div>
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
-    <div style="font-weight:850; margin-bottom:6px;">All partners</div>
-
-    <div class="partnersRow">
-      ${list.map(d => `
-        <span class="partnerItem">
-          <span class="badge ${badgeClass(d.deal_type)}">${dealLetter(d.deal_type)}</span>
-          <span class="partnerName">${escapeHTML(d.partner_name)}</span>
-        </span>
-      `).join("")}
-    </div>
-  `;
-}
-
-
-
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-
-function labelKey(iso2, partner) {
+  function labelKey(iso2, partner) {
     return `${PROJ_ID}:${iso2}:${partner}`;
   }
   function getIso2(f) {
@@ -214,41 +215,36 @@ function labelKey(iso2, partner) {
   }
 
   function normalizeDeals() {
-  dealsByIso2 = new Map();
+    dealsByIso2 = new Map();
 
-  for (const d of deals) {
-    const iso2 = String(d.country_iso2 || "").trim().toUpperCase();
-    if (!iso2) continue;
+    for (const d of deals) {
+      const iso2 = String(d.country_iso2 || "").trim().toUpperCase();
+      if (!iso2) continue;
 
-    const type = String(d.deal_type || "").trim().toUpperCase();
-    if (!TYPE_RANK.hasOwnProperty(type)) continue;
+      const type = String(d.deal_type || "").trim().toUpperCase();
+      if (!TYPE_RANK.hasOwnProperty(type)) continue;
 
-    // 🔥🔥🔥 핵심 추가: show_on_map 필터
-    const show = (d.show_on_map ?? true) === true;
-    if (!show) continue;
+      // ✅ (5) show_on_map filter: OFF -> don't render on map at all
+      const show = (d.show_on_map ?? true) === true;
+      if (!show) continue;
 
-    // 기존 타입 필터
-    if (!showTypes.has(type)) continue;
+      // ✅ (4) per-type filter
+      if (!showTypes.has(type)) continue;
 
-    const item = {
-      id: d.id,
-      deal_type: type,
-      partner_name: String(d.partner_name || "").trim(),
-    };
+      const item = {
+        id: d.id,
+        deal_type: type,
+        partner_name: String(d.partner_name || "").trim(),
+      };
 
-    if (!dealsByIso2.has(iso2)) dealsByIso2.set(iso2, []);
-    dealsByIso2.get(iso2).push(item);
+      if (!dealsByIso2.has(iso2)) dealsByIso2.set(iso2, []);
+      dealsByIso2.get(iso2).push(item);
+    }
+
+    for (const [iso2, arr] of dealsByIso2.entries()) {
+      arr.sort((a, b) => (TYPE_RANK[a.deal_type] - TYPE_RANK[b.deal_type]) || a.partner_name.localeCompare(b.partner_name));
+    }
   }
-
-  for (const [iso2, arr] of dealsByIso2.entries()) {
-    arr.sort(
-      (a, b) =>
-        (TYPE_RANK[a.deal_type] - TYPE_RANK[b.deal_type]) ||
-        a.partner_name.localeCompare(b.partner_name)
-    );
-  }
-}
-
 
   function bboxArea(feat) {
     const b = path.bounds(feat);
@@ -360,10 +356,9 @@ function labelKey(iso2, partner) {
 
     const wrap = elMap.getBoundingClientRect();
     const width = Math.max(860, Math.floor(wrap.width || 1000));
-    // ✅ Keep the SVG background height tightly matched to the map area (no huge empty space)
-    // We cap the canvas height to stay within one screen and use a stable width-based fallback.
     const vh = Math.max(700, Math.floor(window.innerHeight || 900));
     const height = Math.max(560, Math.min(Math.floor(vh * 0.72), Math.floor(width * 0.62)));
+
     svg = d3.select(elMap)
       .append("svg")
       .attr("width", width)
@@ -376,19 +371,20 @@ function labelKey(iso2, partner) {
       .attr("width", width).attr("height", height)
       .attr("fill", "#fbf7ef");
 
-    projection = d3.geoEqualEarth()
-      .rotate([-155, 0]); // ✅ Equal Earth (flat) + Americas on the right
+    projection = d3.geoEqualEarth().rotate([-155, 0]); // Americas on the right
     path = d3.geoPath(projection);
 
     const fitFeatures = features.filter(f => String(f?.properties?.name || "").trim() !== "Antarctica");
     const fc = { type: "FeatureCollection", features: fitFeatures };
-    // padding to avoid top clipping
+
     const padX = Math.max(18, Math.round(width * 0.03));
     const padY = Math.max(18, Math.round(height * 0.05));
     const leftPad = padX * 2;
     const rightPad = padX;
+
     projection.fitExtent([[leftPad, padY], [width - rightPad, height - padY]], fc);
-gCountries = svg.append("g").attr("class", "countries");
+
+    gCountries = svg.append("g").attr("class", "countries");
     gLabels = svg.append("g").attr("class", "labels");
 
     gCountries.selectAll("path")
@@ -422,20 +418,16 @@ gCountries = svg.append("g").attr("class", "countries");
     updateButtons();
   }
 
-  // ✅ (1) Auto text side switching (away from centroid)
+  // ✅ Auto text side switching (away from centroid)
   function applyTextSide(d, selAnchor) {
     const dx = (d.mode === "line" ? (d.x - d.centroid[0]) : 1); // default right if anchor
     const side = dx >= 0 ? "right" : "left";
 
     const textSel = selAnchor.select("text.txt");
     if (side === "right") {
-      textSel
-        .attr("x", 12)
-        .attr("text-anchor", "start");
+      textSel.attr("x", 12).attr("text-anchor", "start");
     } else {
-      textSel
-        .attr("x", -12)
-        .attr("text-anchor", "end");
+      textSel.attr("x", -12).attr("text-anchor", "end");
     }
   }
 
@@ -462,9 +454,22 @@ gCountries = svg.append("g").attr("class", "countries");
       const saved = labelsDB.get(key);
 
       const base = computeDefaultLabelPos(f, c, small);
-      const x = saved?.x ?? base.x;
-      const y = saved?.y ?? base.y;
+
+      // ✅ v3-offset: saved.x/y are dx/dy offsets from centroid (for line mode)
       const mode = saved?.mode ?? base.mode;
+
+      let x = base.x;
+      let y = base.y;
+
+      if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+        if (mode === "line") {
+          x = c[0] + Number(saved.x);
+          y = c[1] + Number(saved.y);
+        } else {
+          x = c[0];
+          y = c[1];
+        }
+      }
 
       labelData.push({
         key, iso2,
@@ -557,7 +562,7 @@ gCountries = svg.append("g").attr("class", "countries");
         const a = self.select("g.anchor");
         a.attr("transform", `translate(${d.x},${d.y})`);
 
-        // ✅ (1) update text side while dragging
+        // update text side while dragging
         applyTextSide(d, a);
 
         self.select("line.lead")
@@ -586,12 +591,17 @@ gCountries = svg.append("g").attr("class", "countries");
     const items = [];
     gLabels.selectAll("g.lbl").each(function (d) {
       if (!dirtyKeys.has(d.key)) return;
+
+      // ✅ centroid-based offsets (dx,dy)
+      const dx = Number(d.x) - Number(d.centroid?.[0] ?? 0);
+      const dy = Number(d.y) - Number(d.centroid?.[1] ?? 0);
+
       items.push({
         key: d.key,
         country_iso2: d.iso2,
         partner_name: d.rep.partner_name,
-        x: d.x,
-        y: d.y,
+        x: dx,
+        y: dy,
         mode: d.mode || "line",
       });
     });
